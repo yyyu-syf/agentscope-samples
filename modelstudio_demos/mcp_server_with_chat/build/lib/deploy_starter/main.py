@@ -230,14 +230,14 @@ async def chat(request_data: ChatRequest):
             # First phase: LLM initial response (may contain tool call decisions)
             if openai_tools:
                 response = await client.chat.completions.create(
-                    model=config.get("DASHSCOPE_MODEL_NAME", "qwen-flash"),
+                    model=config.get("DASHSCOPE_MODEL_NAME", "qwen-plus"),
                     messages=messages,
                     tools=openai_tools,
                     stream=True,
                 )
             else:
                 response = await client.chat.completions.create(
-                    model=config.get("DASHSCOPE_MODEL_NAME", "qwen-flash"),
+                    model=config.get("DASHSCOPE_MODEL_NAME", "qwen-plus"),
                     messages=messages,
                     stream=True,
                 )
@@ -402,7 +402,7 @@ async def chat(request_data: ChatRequest):
 
                 # 6. Use tool results to call LLM again to generate final answer
                 final_response = await client.chat.completions.create(
-                    model=config.get("DASHSCOPE_MODEL_NAME", "qwen-flash"),
+                    model=config.get("DASHSCOPE_MODEL_NAME", "qwen-plus"),
                     messages=messages,
                     stream=True,
                 )

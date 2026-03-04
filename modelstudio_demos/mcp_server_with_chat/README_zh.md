@@ -36,15 +36,16 @@ python -m deploy_starter.main
 curl http://localhost:8080/health
 ```
 
-**测试 Chat 接口，调用天气搜索MCP Tool:**
+**测试 Chat 接口（`mode=stock_claim`）:**
 ```bash
 curl -X POST http://localhost:8080/process \
   -H "Content-Type: application/json" \
   -d '{
+    "mode": "stock_claim",
     "input": [
       {
         "role": "user",
-        "content": [{"type": "text", "text": "帮我查一下杭州的天气，最近5天的"}]
+        "content": [{"type": "text", "text": "我买了600519，帮我看看能不能算索赔金额"}]
       }
     ],
     "session_id": "test-session-001",
@@ -63,49 +64,45 @@ npx @modelcontextprotocol/inspector
 
 ---
 
-## 🛠️ 开发你的第一个 MCP 工具
+## 🛠️ 股票索赔 MCP 工具
 
-在 `deploy_starter/mcp_server.py` 中，使用 `@mcp.tool()` 装饰器定义工具：
+当前 Demo 在 `deploy_starter/mcp_server.py` 中提供两个股票索赔工具：
 
-> **注意**: 重构后，所有 MCP 工具定义都在 `mcp_server.py` 中，`main.py` 负责集成和路由
+1. `get_stock_claim_reference_by_code`
+- 输入：`stock_code`（6位数字字符串）
+- 输出：立案日、基准日、基准价、状态等参考信息
 
-### 示例 1: 同步工具（简单调用，IO性能一般）
+2. `calculate_stock_claim_compensation`
+- 输入：索赔测算参数
+- 输出：`claim_amount_total`、分段金额和校验错误
 
-```python
-from typing import Annotated
-from pydantic import Field
-
-@mcp.tool(
-    name="add Tool",
-    description="一个简单的加法工具示例"
-)
-def add_numbers(
-    a: Annotated[int, Field(description="add a")],
-    b: Annotated[int, Field(description="add b")]
-) -> int:
-    return a + b
-```
-
-### 示例 2: 异步工具（异步调用，IO性能高）
+示例定义：
 
 ```python
 @mcp.tool(
-    name="阿里云百炼search",
-    description="通过阿里云百炼 API 搜索"
+    name="get_stock_claim_reference_by_code",
+    description="根据6位股票代码查询立案与基准参考信息"
 )
-async def search_by_modelStudio(
-    query: Annotated[str, Field(description="搜索的query语句")],
-    count: Annotated[int, Field(description="搜索返回结果数")] = 5
-) -> SearchLiteOutput:
-    input_data = SearchLiteInput(query=query, count=count)
-    search_component = ModelstudioSearchLite()
-    result = await search_component.arun(input_data)
-    return result
+def get_stock_claim_reference_by_code(
+    stock_code: Annotated[str, Field(description="6位股票代码")]
+) -> dict:
+    ...
 ```
 
-**注意**: 异步工具需要设置环境变量 `DASHSCOPE_API_KEY`用来调用百炼服务
+`/process` 支持按请求路由系统提示词：
+- `mode: "stock_claim"`：注入股票索赔系统提示词并引导工具调用。
+- `mode: "general"`（默认）：不注入股票索赔提示词。
+
+**注意**: 需要设置 `DASHSCOPE_API_KEY` 才能启用 Chat + 工具调用。
 ```bash
 export DASHSCOPE_API_KEY='sk-xxxxxx'
+```
+
+### 一次性导入股票索赔数据库（从现有 legal_rag DB 复制）
+
+```bash
+python -m deploy_starter.scripts.copy_stock_claim_db \
+  --src /path/to/source/stock_claim.db
 ```
 
 
@@ -119,16 +116,15 @@ export DASHSCOPE_API_KEY='sk-xxxxxx'
 from typing import Annotated, Optional
 from pydantic import Field
 
-@mcp.tool(
-    name="your_tool_name",           # 工具名称（AI 看到的名字）
-    description="工具的详细描述"      # 工具用途说明
-)
-def your_tool(
-    param1: Annotated[str, Field(description="参数1的描述")],
-    param2: Annotated[int, Field(description="参数2的描述")] = 10
+@mcp.tool(name="calculate_stock_claim_compensation")
+def calculate_stock_claim_compensation(
+    is_pre_filing_bought: Annotated[bool, Field(description="是否立案前买入")],
+    avg_buy_price: Annotated[float, Field(description="买入均价")],
+    total_shares: Annotated[float, Field(description="买入总股数")],
+    pre_benchmark_sold_shares: Annotated[float, Field(description="基准日前卖出股数")],
+    pre_benchmark_avg_sell_price: Annotated[float, Field(description="基准日前卖出均价")],
 ) -> dict:
-    # 你的业务逻辑
-    return {"result": "success"}
+    ...
 ```
 
 ---
@@ -189,7 +185,10 @@ runtime-fc-deploy \
 .
 ├── deploy_starter/
 │   ├── main.py          # 主程序 - FastAPI 应用入口，集成 Chat 和 MCP 路由
-│   ├── mcp_server.py    # MCP Server 定义 - 在这里定义你的 MCP 工具
+│   ├── mcp_server.py    # MCP Server 定义 - 注册股票索赔工具
+│   ├── stock_claim_service.py  # 股票索赔提示词 + 领域逻辑 + sqlite 存储
+│   ├── scripts/
+│   │   └── copy_stock_claim_db.py  # 一次性数据库复制脚本
 │   └── config.yml       # 配置文件
 ├── requirements.txt     # 依赖列表
 ├── setup.py            # 打包配置（用于云端部署）
@@ -199,7 +198,8 @@ runtime-fc-deploy \
 
 **核心文件说明:**
 - `main.py`: FastAPI 主应用，提供 `/process` 端点和生命周期管理，将 MCP Server 挂载到 `/mcp` 路径
-- `mcp_server.py`: FastMCP 服务器实例，定义所有 MCP 工具，提供工具列表和调用函数
+- `mcp_server.py`: FastMCP 服务器实例，定义股票索赔 MCP 工具
+- `stock_claim_service.py`: 股票索赔领域逻辑、参考信息查询、金额计算、系统提示词
 
 ---
 
@@ -217,9 +217,12 @@ FC_START_HOST: "0.0.0.0"  # 云端部署使用
 PORT: 8080
 HOST: "127.0.0.1"  # 本地开发使用
 
+# 股票索赔 sqlite 路径（环境变量 STOCK_CLAIM_DB_PATH 优先）
+STOCK_CLAIM_DB_PATH: "./data/stock_claim/stock_claim.sqlite"
+
 # 阿里云百炼 API Key（可选，也可以用环境变量）
 # DASHSCOPE_API_KEY: "sk-xxx"
-DASHSCOPE_MODEL_NAME: "qwen-plus"  # LLM 模型名称
+DASHSCOPE_MODEL_NAME: "qwen-flash"  # LLM 模型名称
 ```
 
 ### DashScope API 配置

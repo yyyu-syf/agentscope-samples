@@ -35,15 +35,16 @@ python -m deploy_starter.main
 curl http://localhost:8080/health
 ```
 
-**Test Chat Endpoint:**
+**Test Chat Endpoint (`mode=stock_claim`):**
 ```bash
 curl -X POST http://localhost:8080/process \
   -H "Content-Type: application/json" \
   -d '{
+    "mode": "stock_claim",
     "input": [
       {
         "role": "user",
-        "content": [{"type": "text", "text": "Hello"}]
+        "content": [{"type": "text", "text": "我买了600519，帮我看看能不能算索赔金额"}]
       }
     ],
     "session_id": "test-session-001",
@@ -62,49 +63,45 @@ Connect to: `http://localhost:8080/mcp`
 
 ---
 
-## 🛠️ Develop Your First MCP Tool
+## 🛠️ Stock Claim MCP Tools
 
-Define tools in `deploy_starter/mcp_server.py` using the `@mcp.tool()` decorator:
+The demo exposes two stock-claim tools in `deploy_starter/mcp_server.py`:
 
-> **Note**: After refactoring, all MCP tool definitions are in `mcp_server.py`, while `main.py` handles integration and routing
+1. `get_stock_claim_reference_by_code`
+- Input: `stock_code` (6-digit string)
+- Output: filing date / benchmark date / benchmark price / status
 
-### Example 1: Synchronous Tool (Simple call, average IO performance)
+2. `calculate_stock_claim_compensation`
+- Input: stock-claim calculation parameters
+- Output: `claim_amount_total`, split amounts, and validation errors
 
-```python
-from typing import Annotated
-from pydantic import Field
-
-@mcp.tool(
-    name="add Tool",
-    description="A simple addition tool example"
-)
-def add_numbers(
-    a: Annotated[int, Field(description="add a")],
-    b: Annotated[int, Field(description="add b")]
-) -> int:
-    return a + b
-```
-
-### Example 2: Asynchronous Tool (Async call, high IO performance)
+Example definition:
 
 ```python
 @mcp.tool(
-    name="Alibaba Cloud Bailian search",
-    description="Search via Alibaba Cloud Bailian API"
+    name="get_stock_claim_reference_by_code",
+    description="Query filing and benchmark reference by 6-digit stock code."
 )
-async def search_by_modelStudio(
-    query: Annotated[str, Field(description="Search query statement")],
-    count: Annotated[int, Field(description="Number of search results returned")] = 5
-) -> SearchLiteOutput:
-    input_data = SearchLiteInput(query=query, count=count)
-    search_component = ModelstudioSearchLite()
-    result = await search_component.arun(input_data)
-    return result
+def get_stock_claim_reference_by_code(
+    stock_code: Annotated[str, Field(description="6-digit stock code")]
+) -> dict:
+    ...
 ```
 
-**Note**: Async tools require setting the environment variable `DASHSCOPE_API_KEY` to call Bailian services
+`/process` supports request-level prompt routing:
+- `mode: "stock_claim"`: inject the stock claim system prompt and guide tool calling.
+- `mode: "general"` (default): no stock prompt injection.
+
+**Note**: Configure `DASHSCOPE_API_KEY` to enable chat + function calling.
 ```bash
 export DASHSCOPE_API_KEY='sk-xxxxxx'
+```
+
+### One-time DB Copy (from your existing legal_rag DB)
+
+```bash
+python -m deploy_starter.scripts.copy_stock_claim_db \
+  --src /path/to/source/stock_claim.db
 ```
 
 
@@ -118,16 +115,15 @@ Use `Annotated` + `Field` to add descriptions for each parameter:
 from typing import Annotated, Optional
 from pydantic import Field
 
-@mcp.tool(
-    name="your_tool_name",           # Tool name (what AI sees)
-    description="Detailed tool description"      # Tool purpose description
-)
-def your_tool(
-    param1: Annotated[str, Field(description="Description of parameter 1")],
-    param2: Annotated[int, Field(description="Description of parameter 2")] = 10
+@mcp.tool(name="calculate_stock_claim_compensation")
+def calculate_stock_claim_compensation(
+    is_pre_filing_bought: Annotated[bool, Field(description="Bought before filing")],
+    avg_buy_price: Annotated[float, Field(description="Average buy price")],
+    total_shares: Annotated[float, Field(description="Total shares")],
+    pre_benchmark_sold_shares: Annotated[float, Field(description="Sold shares before benchmark")],
+    pre_benchmark_avg_sell_price: Annotated[float, Field(description="Average sell price before benchmark")],
 ) -> dict:
-    # Your business logic
-    return {"result": "success"}
+    ...
 ```
 
 ---
@@ -188,7 +184,10 @@ For details, please refer to the Alibaba Cloud Bailian high-code deployment docu
 .
 ├── deploy_starter/
 │   ├── main.py          # Main program - FastAPI app entry, integrates Chat and MCP routing
-│   ├── mcp_server.py    # MCP Server definition - Define your MCP tools here
+│   ├── mcp_server.py    # MCP Server definition - stock claim tool registration
+│   ├── stock_claim_service.py  # Stock claim prompt + domain logic + sqlite store
+│   ├── scripts/
+│   │   └── copy_stock_claim_db.py  # One-time DB copy utility
 │   └── config.yml       # Configuration file
 ├── requirements.txt     # Dependency list
 ├── setup.py            # Package configuration (for cloud deployment)
@@ -198,7 +197,8 @@ For details, please refer to the Alibaba Cloud Bailian high-code deployment docu
 
 **Core Files Description:**
 - `main.py`: FastAPI main app, provides `/process` endpoint and lifecycle management, mounts MCP Server at `/mcp` path
-- `mcp_server.py`: FastMCP server instance, defines all MCP tools, provides tool list and call functions
+- `mcp_server.py`: FastMCP server instance, defines stock claim MCP tools
+- `stock_claim_service.py`: stock domain logic, reference lookup, compensation calculation, system prompt
 
 ---
 
@@ -216,9 +216,12 @@ FC_START_HOST: "0.0.0.0"  # For cloud deployment
 PORT: 8080
 HOST: "127.0.0.1"  # For local development
 
+# Stock claim sqlite path (env STOCK_CLAIM_DB_PATH has higher priority)
+STOCK_CLAIM_DB_PATH: "./data/stock_claim/stock_claim.sqlite"
+
 # Alibaba Cloud Bailian API Key (optional, can also use environment variable)
 # DASHSCOPE_API_KEY: "sk-xxx"
-DASHSCOPE_MODEL_NAME: "qwen-plus"  # LLM model name
+DASHSCOPE_MODEL_NAME: "qwen-flash"  # LLM model name
 ```
 
 ### DashScope API Configuration

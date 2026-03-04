@@ -84,6 +84,9 @@ setup(
     },
     include_package_data=True,
     package_data={
-        setup_package_name: ["config.yml"],
+        setup_package_name: [
+            "config.yml",
+            "data/stock_claim/*.sqlite",
+        ],
     },
 )

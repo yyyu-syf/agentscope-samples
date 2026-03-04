@@ -17,9 +17,6 @@ MCP_SERVER_VERSION: "1.0.0"
 # ==================== Logging Configuration ====================
 LOG_LEVEL: "INFO"
 
-# ==================== LLM Configuration ====================
-DASHSCOPE_MODEL_NAME: "qwen-flash"
-
 # ==================== Stock Claim Configuration ====================
 # Dedicated stock claim sqlite.
 # Resolve order: env STOCK_CLAIM_DB_PATH -> this config -> fallback deploy_starter/data/stock_claim/stock_claim.sqlite
